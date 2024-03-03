@@ -2,6 +2,7 @@
 ;; https://datatracker.ietf.org/doc/html/rfc8439#section-2.2
 
 (defconstant +STATE-CONSTANTS+ #(#x61707865 #x3320646e #x79622d32 #x6b206574))
+(defconstant +P+ (- (expt 2 130) 5))
 
 ;; n mod 2^32
 (defun norm32 (n)
@@ -77,7 +78,7 @@
 
 (defun print-array (a)
   (dotimes (i (length a))
-    (format t "~X " (aref a i)))
+    (format t "~2,'0X " (aref a i)))
   (format t "~%"))
 
 ;; uint32 array -> uint8 array
@@ -198,7 +199,6 @@
          (result (chacha20-encrypt key counter nonce plaintext)))
     (print-array result)
     result))
-        (print-array ciphertext)))
 
 (defun test-vector-242-decrypt ()
   (let* ((key (make-array 8
@@ -238,3 +238,61 @@
     (print-array result)
     ;; Should be the original plaintext.
     result))
+
+
+;; 2.5.1.  The Poly1305 Algorithm
+(defun clamp (r)
+  (logand r #x0ffffffc0ffffffc0ffffffc0fffffff))
+
+;; arr => array of (unsigned-byte 8)
+;; lo, hi => inclusive range of indexes to use
+(defun le-bytes-to-num (arr lo hi)
+  (let ((result 0))
+    (dotimes (i (- hi lo))
+      (let ((j (+ i lo)))
+        (setf result (+ result (ash (aref arr j) (* i 8))))))
+    result))
+
+(defun num-to-16-le-bytes (num)
+  (let ((result (make-array 16 :element-type '(unsigned-byte 8))))
+    (dotimes (i 16)
+      (let* ((mask (ash #xFF (* i 8)))
+             (octet (ash (logand num mask) (- (* i 8)))))
+        (setf (aref result i) octet)))
+    result))
+
+;; key: array of (unsigned-byte 8)
+(defun poly1305-mac (msg key)
+  (let ((r (clamp (le-bytes-to-num key 0 16)))
+        (s (le-bytes-to-num key 16 32))
+        (a 0))
+    (dotimes (i (ceiling (/ (length msg) 16)))
+      (let* ((lo (* i 16))
+             (hi (min (length msg) (* (1+ i) 16)))
+             (n0 (le-bytes-to-num msg lo hi))
+             (n0-bits (* 8 (- hi lo)))
+             (extra-bit (ash 1 n0-bits))
+             (n (+ n0 extra-bit)))
+        (setf a (+ a n))
+;;        (format t "Lo: ~a  Hi: ~a~%" lo hi)
+;;        (format t "Block /w 0x01 byte: ~X~%" n)
+;;        (format t "Acc+Block: ~X~%" a)
+;;        (format t "(Acc+Block)*r: ~X~%" (* a r))
+        (setf a (mod (* r a) +P+))
+;;        (format t "AccFinal: ~X~%" a)
+        ))
+    (setf a (+ a s))
+    (num-to-16-le-bytes a)))
+
+;; 2.5.2.  Poly1305 Test Vector
+(defun test-vector-252 ()
+  (let* ((key (make-array 32
+                          :element-type '(unsigned-byte 8)
+                          :initial-contents
+                          '(#x85 #xd6 #xbe #x78 #x57 #x55 #x6d #x33 #x7f #x44 #x52 #xfe #x42 #xd5 #x06 #xa8 #x01 #x03 #x80 #x8a #xfb #x0d #xb2 #xfd #x4a #xbf #xf6 #xaf #x41 #x49 #xf5 #x1b)))
+         (msg (make-array 34
+                                :element-type '(unsigned-byte 8)
+                                :initial-contents
+                                '(#x43 #x72 #x79 #x70 #x74 #x6f #x67 #x72 #x61 #x70 #x68 #x69 #x63 #x20 #x46 #x6f #x72 #x75 #x6d #x20 #x52 #x65 #x73 #x65 #x61 #x72 #x63 #x68 #x20 #x47 #x72 #x6f #x75 #x70)))
+         (result (poly1305-mac msg key)))
+    (print-array result)))
