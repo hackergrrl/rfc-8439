@@ -296,3 +296,36 @@
                                 '(#x43 #x72 #x79 #x70 #x74 #x6f #x67 #x72 #x61 #x70 #x68 #x69 #x63 #x20 #x46 #x6f #x72 #x75 #x6d #x20 #x52 #x65 #x73 #x65 #x61 #x72 #x63 #x68 #x20 #x47 #x72 #x6f #x75 #x70)))
          (result (poly1305-mac msg key)))
     (print-array result)))
+
+;; 2.6.1.  Poly1305 Key Generation
+(defun slice-u8 (arr from to)
+  (let ((result (make-array (- to from) :element-type '(unsigned-byte 8))))
+    (dotimes (i (- to from))
+      (setf (aref result i) (aref arr (+ i from))))
+    result))
+
+;; Convert a u8 array to a u32 array.
+(defun u8*-to-u32* (arr)
+  (let ((result (make-array
+                 (floor (/ (length arr) 4))
+                 :element-type '(unsigned-byte 32))))
+    (dotimes (i (floor (/ (length arr) 4)))
+      (setf (aref result i)
+            (logior (aref arr (* i 4))
+                    (ash (aref arr (+ (* i 4) 1)) 8)
+                    (ash (aref arr (+ (* i 4) 2)) 16)
+                    (ash (aref arr (+ (* i 4) 3)) 24))))
+    result))
+
+(defun poly1305-key-gen (key nonce)
+  (slice-u8 (chacha20-block (u8*-to-u32* key) 0 (u8*-to-u32* nonce))
+            0 32))
+
+;; 2.6.2.  Poly1305 Key Generation Test Vector
+(defun test-vector-262 ()
+  (let* ((key (make-array 32 :element-type '(unsigned-byte 8)
+                             :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97 #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
+         (nonce (make-array 12 :element-type '(unsigned-byte 8)
+                               :initial-contents '(#x00 #x00 #x00 #x00 #x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07)))
+         (result (poly1305-key-gen key nonce)))
+    (print-array result)))
