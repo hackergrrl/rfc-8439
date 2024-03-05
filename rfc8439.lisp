@@ -106,9 +106,7 @@
   (quarterround state 2 7 8 13)
   (quarterround state 3 4 9 14))
 
-;; key  : 256-bit / 8 32-bit words
-;; nonce:  96-bit / 3 32-bit words
-;; count:  32-bit / 1 32-bit word
+;; (key: u32[8], counter: number|u32[1], nonce: u32[3]) => u8[]
 (defun chacha20-block (key counter nonce)
   (let* ((cntr (if (numberp counter)
                    (make-array 1 :element-type '(unsigned-byte 32)
@@ -141,11 +139,11 @@
     result))
 
 ;; 2.4.1.  The ChaCha20 Encryption Algorithm
-;;; plaintext and ciphertext are arrays with an element-type of (unsigned-byte 8).
+;; (key: u32[8], counter: number|u32[1], nonce: u32[3], plaintext: u8[]) => u8[]
 (defun chacha20-encrypt (key counter nonce plaintext)
   (let ((ciphertext
           (make-array (length plaintext) :element-type '(unsigned-byte 8)))
-        (cntr (aref counter 0)))
+        (cntr (if (numberp counter) counter (aref counter 0))))
     (dotimes (j (floor (/ (length plaintext) 64)))
       (let* ((key-stream (chacha20-block key (+ j cntr) nonce)))
         (loop for k from (* j 64) to (+ (* j 64) 63)
@@ -244,8 +242,8 @@
 (defun clamp (r)
   (logand r #x0ffffffc0ffffffc0ffffffc0fffffff))
 
-;; arr => array of (unsigned-byte 8)
 ;; lo, hi => inclusive range of indexes to use
+;; (arr: u8[], lo: number, hi: number) => number
 (defun le-bytes-to-num (arr lo hi)
   (let ((result 0))
     (dotimes (i (- hi lo))
@@ -253,9 +251,19 @@
         (setf result (+ result (ash (aref arr j) (* i 8))))))
     result))
 
+;; (num: number) => u8[16]
 (defun num-to-16-le-bytes (num)
   (let ((result (make-array 16 :element-type '(unsigned-byte 8))))
     (dotimes (i 16)
+      (let* ((mask (ash #xFF (* i 8)))
+             (octet (ash (logand num mask) (- (* i 8)))))
+        (setf (aref result i) octet)))
+    result))
+
+;; (num: number) => u8[8]
+(defun num-to-8-le-bytes (num)
+  (let ((result (make-array 8 :element-type '(unsigned-byte 8))))
+    (dotimes (i 8)
       (let* ((mask (ash #xFF (* i 8)))
              (octet (ash (logand num mask) (- (* i 8)))))
         (setf (aref result i) octet)))
@@ -274,13 +282,7 @@
              (extra-bit (ash 1 n0-bits))
              (n (+ n0 extra-bit)))
         (setf a (+ a n))
-;;        (format t "Lo: ~a  Hi: ~a~%" lo hi)
-;;        (format t "Block /w 0x01 byte: ~X~%" n)
-;;        (format t "Acc+Block: ~X~%" a)
-;;        (format t "(Acc+Block)*r: ~X~%" (* a r))
-        (setf a (mod (* r a) +P+))
-;;        (format t "AccFinal: ~X~%" a)
-        ))
+        (setf a (mod (* r a) +P+))))
     (setf a (+ a s))
     (num-to-16-le-bytes a)))
 
@@ -298,6 +300,7 @@
     (print-array result)))
 
 ;; 2.6.1.  Poly1305 Key Generation
+;; (arr: u8[], from: number, to: number) => u8[]
 (defun slice-u8 (arr from to)
   (let ((result (make-array (- to from) :element-type '(unsigned-byte 8))))
     (dotimes (i (- to from))
@@ -305,6 +308,7 @@
     result))
 
 ;; Convert a u8 array to a u32 array.
+;; (arr: u8[]) => u32-array
 (defun u8*-to-u32* (arr)
   (let ((result (make-array
                  (floor (/ (length arr) 4))
@@ -317,6 +321,7 @@
                     (ash (aref arr (+ (* i 4) 3)) 24))))
     result))
 
+;; (key: u8[32], nonce: u8[12]) => u8[]
 (defun poly1305-key-gen (key nonce)
   (slice-u8 (chacha20-block (u8*-to-u32* key) 0 (u8*-to-u32* nonce))
             0 32))
@@ -329,3 +334,92 @@
                                :initial-contents '(#x00 #x00 #x00 #x00 #x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07)))
          (result (poly1305-key-gen key nonce)))
     (print-array result)))
+
+;; 2.8.  AEAD Construction
+(defun make-u8* (len)
+  (make-array len :element-type '(unsigned-byte 8)))
+
+(defun concat-u8* (&rest args)
+  (apply #'concatenate 'vector args))
+
+;; Generates an array of zeroes that, if concatenated to `arr`, would result in an array with
+;; a length divisible by 16.
+;; (arr: u8[]) => u8[]
+(defun pad16 (arr)
+  (let ((n (mod (length arr) 16)))
+    (if (= 0 n)
+        (make-u8* 0)
+        (make-u8* (- 16 n)))))
+
+;; (aad: u8[], key: u8[32], iv: u8[8], constant: u8[4], plaintext: u8[]) => u8[], u8[16]
+(defun chacha20-aead-encrypt (aad key iv constant plaintext)
+  (let* ((nonce (concat-u8* constant iv))
+         (otk (poly1305-key-gen key nonce))
+         (key32 (u8*-to-u32* key))
+         (nonce32 (u8*-to-u32* nonce))
+         (ciphertext (chacha20-encrypt key32 1 nonce32 plaintext))
+         (mac-data (concat-u8* aad (pad16 aad)
+                               ciphertext (pad16 ciphertext)
+                               (num-to-8-le-bytes (length aad))
+                               (num-to-8-le-bytes (length ciphertext))))
+         (tag (poly1305-mac mac-data otk)))
+    (values ciphertext tag)))
+
+;; (aad: u8[], key: u8[32], iv: u8[8], constant: u8[4], plaintext: u8[]) => u8[], u8[16]
+(defun chacha20-aead-decrypt (aad key iv constant ciphertext)
+  (let* ((nonce (concat-u8* constant iv))
+         (otk (poly1305-key-gen key nonce))
+         (key32 (u8*-to-u32* key))
+         (nonce32 (u8*-to-u32* nonce))
+         (plaintext (chacha20-encrypt key32 1 nonce32 ciphertext))
+         (mac-data (concat-u8* aad (pad16 aad)
+                               ciphertext (pad16 ciphertext)
+                               (num-to-8-le-bytes (length aad))
+                               (num-to-8-le-bytes (length ciphertext))))
+         (tag (poly1305-mac mac-data otk)))
+    (values plaintext tag)))
+
+;; 2.8.2.  Test Vector for AEAD_CHACHA20_POLY1305
+(defun test-vector-282 ()
+  (let* ((plaintext (make-array 114
+                                :element-type '(unsigned-byte 8)
+                                :initial-contents
+                                '(#x4c #x61 #x64 #x69 #x65 #x73 #x20 #x61
+                                  #x6e #x64 #x20 #x47 #x65 #x6e #x74 #x6c
+                                  #x65 #x6d #x65 #x6e #x20 #x6f #x66 #x20
+                                  #x74 #x68 #x65 #x20 #x63 #x6c #x61 #x73
+                                  #x73 #x20 #x6f #x66 #x20 #x27 #x39 #x39
+                                  #x3a #x20 #x49 #x66 #x20 #x49 #x20 #x63
+                                  #x6f #x75 #x6c #x64 #x20 #x6f #x66 #x66
+                                  #x65 #x72 #x20 #x79 #x6f #x75 #x20 #x6f
+                                  #x6e #x6c #x79 #x20 #x6f #x6e #x65 #x20
+                                  #x74 #x69 #x70 #x20 #x66 #x6f #x72 #x20
+                                  #x74 #x68 #x65 #x20 #x66 #x75 #x74 #x75
+                                  #x72 #x65 #x2c #x20 #x73 #x75 #x6e #x73
+                                  #x63 #x72 #x65 #x65 #x6e #x20 #x77 #x6f
+                                  #x75 #x6c #x64 #x20 #x62 #x65 #x20 #x69
+                                  #x74 #x2e)))
+         (aad (make-array 12
+                              :element-type '(unsigned-byte 8)
+                              :initial-contents '(#x50 #x51 #x52 #x53 #xc0 #xc1 #xc2 #xc3 #xc4 #xc5 #xc6 #xc7)))
+         (key (make-array 32
+                          :element-type '(unsigned-byte 8)
+                          :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97 #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
+         (iv (make-array 8
+                            :element-type '(unsigned-byte 8)
+                            :initial-contents '(#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47)))
+         (constant (make-array 4
+                            :element-type '(unsigned-byte 8)
+                            :initial-contents '(#x07 #x00 #x00 #x00))))
+    (multiple-value-bind (ciphertext tag)
+        (chacha20-aead-encrypt aad key iv constant plaintext)
+      (format t "Ciphertext: ")
+      (print-array ciphertext)
+      (format t "Tag       : ")
+      (print-array tag)
+      (multiple-value-bind (ptext tag2)
+          (chacha20-aead-decrypt aad key iv constant ciphertext)
+      (format t "Decrypted : ")
+      (print-array ptext)
+      (format t "Tag       : ")
+      (print-array tag2)))))
