@@ -1,8 +1,8 @@
 # rfc-8439
 
-This is a working implementation of "RFC 8439: ChaCha20 and Poly1305 for IETF
-Protocols", written in Common Lisp. It passes the primary test vectors given in
-the RFC.
+This is a working implementation of [RFC 8439: ChaCha20 and Poly1305 for IETF
+Protocols](https://datatracker.ietf.org/doc/html/rfc8439), written in Common
+Lisp. It passes the primary test vectors given in the RFC document.
 
 The main functions mimick the RFC's pseudocode:
 
