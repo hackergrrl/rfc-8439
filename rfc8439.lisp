@@ -1,5 +1,5 @@
 ;; RFC 8439: ChaCha20 and Poly1305 for IETF Protocols
-;; https://datatracker.ietf.org/doc/html/rfc8439#section-2.2
+;; https://datatracker.ietf.org/doc/html/rfc8439
 
 (defconstant +STATE-CONSTANTS+ #(#x61707865 #x3320646e #x79622d32 #x6b206574))
 (defconstant +P+ (- (expt 2 130) 5))
