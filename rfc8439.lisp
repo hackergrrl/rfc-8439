@@ -365,7 +365,7 @@
          (tag (poly1305-mac mac-data otk)))
     (values ciphertext tag)))
 
-;; (aad: u8[], key: u8[32], iv: u8[8], constant: u8[4], plaintext: u8[]) => u8[], u8[16]
+;; (aad: u8[], key: u8[32], iv: u8[8], constant: u8[4], ciphertext: u8[]) => u8[], u8[16]
 (defun chacha20-aead-decrypt (aad key iv constant ciphertext)
   (let* ((nonce (concat-u8* constant iv))
          (otk (poly1305-key-gen key nonce))
