@@ -1,19 +1,20 @@
-;; RFC 8439: ChaCha20 and Poly1305 for IETF Protocols
+;;;; Implementation of RFC 8439: ChaCha20 and Poly1305 for IETF Protocols.
 ;; https://datatracker.ietf.org/doc/html/rfc8439
 
-(defconstant +STATE-CONSTANTS+ #(#x61707865 #x3320646e #x79622d32 #x6b206574))
-(defconstant +P+ (- (expt 2 130) 5))
+(defconstant +state-constants+ #(#x61707865 #x3320646e #x79622d32 #x6b206574))
+(defconstant +p+ (- (expt 2 130) 5))
 
-;; n mod 2^32
 (defun norm32 (n)
+  "Computes n mod 2^32."
   (logand n #xFFFFFFFF))
 
-;; (x + y) mod 2^32
 (defun 32+ (x y)
+  "Computes (x + y) mod 2^32."
+  (declare ((unsigned-byte 32) x y))
   (norm32 (+ x y)))
 
-;; 32-bit bitwise shift left with wrap-around.
 (defun rotl32 (n times)
+  "Performs a 32-bit bitwise shift left with wrap-around."
   (norm32 (logior
            (ash n times)
            (ash n (- times 32)))))
@@ -112,7 +113,7 @@
                    (make-array 1 :element-type '(unsigned-byte 32)
                                  :initial-contents (list counter))
                    counter))
-         (state (concatenate 'vector +STATE-CONSTANTS+ key cntr nonce))
+         (state (concatenate 'vector +state-constants+ key cntr nonce))
          (initial-state (copy-seq state)))
     (dotimes (i 10)
       (inner-block state))
@@ -282,7 +283,7 @@
              (extra-bit (ash 1 n0-bits))
              (n (+ n0 extra-bit)))
         (setf a (+ a n))
-        (setf a (mod (* r a) +P+))))
+        (setf a (mod (* r a) +p+))))
     (setf a (+ a s))
     (num-to-16-le-bytes a)))
 
@@ -291,11 +292,18 @@
   (let* ((key (make-array 32
                           :element-type '(unsigned-byte 8)
                           :initial-contents
-                          '(#x85 #xd6 #xbe #x78 #x57 #x55 #x6d #x33 #x7f #x44 #x52 #xfe #x42 #xd5 #x06 #xa8 #x01 #x03 #x80 #x8a #xfb #x0d #xb2 #xfd #x4a #xbf #xf6 #xaf #x41 #x49 #xf5 #x1b)))
+                          '(#x85 #xd6 #xbe #x78 #x57 #x55 #x6d #x33
+                            #x7f #x44 #x52 #xfe #x42 #xd5 #x06 #xa8
+                            #x01 #x03 #x80 #x8a #xfb #x0d #xb2 #xfd
+                            #x4a #xbf #xf6 #xaf #x41 #x49 #xf5 #x1b)))
          (msg (make-array 34
-                                :element-type '(unsigned-byte 8)
-                                :initial-contents
-                                '(#x43 #x72 #x79 #x70 #x74 #x6f #x67 #x72 #x61 #x70 #x68 #x69 #x63 #x20 #x46 #x6f #x72 #x75 #x6d #x20 #x52 #x65 #x73 #x65 #x61 #x72 #x63 #x68 #x20 #x47 #x72 #x6f #x75 #x70)))
+                          :element-type '(unsigned-byte 8)
+                          :initial-contents
+                          '(#x43 #x72 #x79 #x70 #x74 #x6f #x67 #x72
+                            #x61 #x70 #x68 #x69 #x63 #x20 #x46 #x6f
+                            #x72 #x75 #x6d #x20 #x52 #x65 #x73 #x65
+                            #x61 #x72 #x63 #x68 #x20 #x47 #x72 #x6f
+                            #x75 #x70)))
          (result (poly1305-mac msg key)))
     (print-array result)))
 
@@ -329,9 +337,13 @@
 ;; 2.6.2.  Poly1305 Key Generation Test Vector
 (defun test-vector-262 ()
   (let* ((key (make-array 32 :element-type '(unsigned-byte 8)
-                             :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97 #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
+                             :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87
+                                                 #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f
+                                                 #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97
+                                                 #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
          (nonce (make-array 12 :element-type '(unsigned-byte 8)
-                               :initial-contents '(#x00 #x00 #x00 #x00 #x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07)))
+                               :initial-contents '(#x00 #x00 #x00 #x00 #x00 #x01 #x02 #x03
+                                                   #x04 #x05 #x06 #x07)))
          (result (poly1305-key-gen key nonce)))
     (print-array result)))
 
@@ -342,8 +354,8 @@
 (defun concat-u8* (&rest args)
   (apply #'concatenate 'vector args))
 
-;; Generates an array of zeroes that, if concatenated to `arr`, would result in an array with
-;; a length divisible by 16.
+;; Generates an array of zeroes that, if concatenated to `arr`, would result in an array with a
+;; length divisible by 16.
 ;; (arr: u8[]) => u8[]
 (defun pad16 (arr)
   (let ((n (mod (length arr) 16)))
@@ -401,10 +413,14 @@
                                   #x74 #x2e)))
          (aad (make-array 12
                               :element-type '(unsigned-byte 8)
-                              :initial-contents '(#x50 #x51 #x52 #x53 #xc0 #xc1 #xc2 #xc3 #xc4 #xc5 #xc6 #xc7)))
+                              :initial-contents '(#x50 #x51 #x52 #x53 #xc0 #xc1 #xc2 #xc3
+                                                  #xc4 #xc5 #xc6 #xc7)))
          (key (make-array 32
                           :element-type '(unsigned-byte 8)
-                          :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97 #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
+                          :initial-contents '(#x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87
+                                              #x88 #x89 #x8a #x8b #x8c #x8d #x8e #x8f
+                                              #x90 #x91 #x92 #x93 #x94 #x95 #x96 #x97
+                                              #x98 #x99 #x9a #x9b #x9c #x9d #x9e #x9f)))
          (iv (make-array 8
                             :element-type '(unsigned-byte 8)
                             :initial-contents '(#x40 #x41 #x42 #x43 #x44 #x45 #x46 #x47)))
@@ -419,7 +435,7 @@
       (print-array tag)
       (multiple-value-bind (ptext tag2)
           (chacha20-aead-decrypt aad key iv constant ciphertext)
-      (format t "Decrypted : ")
-      (print-array ptext)
-      (format t "Tag       : ")
-      (print-array tag2)))))
+        (format t "Decrypted : ")
+        (print-array ptext)
+        (format t "Tag       : ")
+        (print-array tag2)))))
